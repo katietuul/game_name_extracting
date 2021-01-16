@@ -1,0 +1,164 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(readr)
+library(dplyr)
+library(stringr)
+library(stringdist)
+library(tidytext)
+library(data.table)
+library(tidyr)
+
+```
+
+Загрузка датасета + списка названий топ-100 игр 
+
+```{r}
+
+load('indie_final.rda')
+#games_final = games_final %>% dplyr::select("review")
+
+names <- read.csv("meta.csv")
+names$title_text = tolower(names$title_text)
+names$title_text <- str_replace_all(names$title_text, "[[:punct:]]", " ")
+
+```
+
+Приведем отзывы и названия игр к длинному формату и поищем их таким образом с помощью amatch
+
+```{r}
+
+games_final = games_final %>% unnest_tokens(text, review)
+
+stopwords = data.frame(words=stopwords("en"), stringsAsFactors=FALSE)
+names_5 = names
+names_5$title_text <- str_replace_all(names$title_text, "[[:digit:]]", " ")
+names_5$text = names_5$title_text
+
+names_5 = names_5 %>%
+  unnest_tokens(words, title_text) %>% 
+  filter(! words %in% stopwords$words)
+
+names_5 = names_5 %>% 
+   group_by(words) %>%
+   filter(n()==1)
+
+names_5$len = str_length(names_5$words)
+names_5 = names_5 %>% dplyr::filter(len > 3)
+
+games_final$appr_mtch = amatch(games_final$text, names_5$words, maxDist=1)
+
+games_final = na.omit(games_final)
+
+```
+
+Достаем полные названия игр из тех отзывов, в которых были обнаружены неполные названия
+
+```{r}
+
+names_7 = names_5 %>% dplyr::select(text)
+names_7$id = rownames(names_7)
+
+games_final$appr_mtch = as.numeric(games_final$appr_mtch)
+names_7$id = as.numeric(names_7$id)
+
+games_final = left_join(games_final, names_7, by = c("appr_mtch" = "id"))
+
+games_final = games_final %>% 
+  group_by(recommendationid) %>% 
+  summarise(text = paste0(`text.y`, collapse=";"))
+
+gf = games_final
+load('indie_final.rda')
+
+games_final = left_join(games_final, gf, by = "recommendationid")
+
+```
+
+Распознаем названия игр с помощью регулярки и amatch (для amatch удалила fez, потому что из-за него было много мусора)
+
+```{r}
+
+g <- paste(names$title_text, sep="|", collapse="|")
+
+games_final$games_full = ""
+games_final$games_full = str_extract(games_final$review, g)
+
+names_2 = names %>% filter(title_text != "fez")
+
+```
+
+!! этот способ проявил себя неэффективным, но пусть останется на всякий случай!!
+
+Достаем аббревиатуры
+
+```{r}
+
+regex <- '(?<=^|\\s|\\.)[[:alpha:]]|\\:'
+
+for(i in 1:100){ 
+  ABB <- regmatches(names$title_text[i], gregexpr(regex, names$title_text[i], perl=TRUE))
+  names$initials[i] <- paste(ABB[[1]], collapse="")
+  names$initials[i] <- sub(":.*", "", names$initials[i])}
+
+```
+
+Удаляем из списка некоторые аббревиатуры, потому что слишком похоже на слово и выдает мусор, пробелы не помогли)
+
+```{r}
+
+names$len = str_length(names$initials)
+`%notin%` <- Negate(`%in%`)
+names_4 <- names %>% filter(len > 2 & initials %notin% c("bac", "cki", "tob", "rtw", "coh", "rdr", "sfi"))
+
+# for(i in 1:60){
+#  names4$initials[i] <- paste(names4$initials[i], " ", collapse="")}
+
+abbs <- paste(names_4$initials, sep="|", collapse="|")
+
+games_final$like = str_extract(games_final$review, abbs)
+
+unique(games_final$like)
+
+```
+
+!! вот этот способ получше !!
+
+Попробуем вытащить конкретные аббревиатуры, которые часто используются
+
+```{r}
+
+abbs <- "cod |wow |gta v|gta 5"
+
+games_final$like = str_extract(games_final$review, abbs)
+
+```
+
+Фильтруем датасет: оставляем только те отзывы, в которых чет распозналось 
+
+```{r}
+
+detected_games = games_final %>% filter(games_full != "NA" | like != "NA" |text != "NA")
+
+not_detected_games = games_final %>% filter(games_full == "NA" | like == "NA" |text == "NA")
+
+```
+
+Достаем полные названия игр из тех отзывов, в которых были обнаружены аббревиатуры - тут нужно просто расшфровать
+
+```{r}
+
+
+
+```
+
+
+
